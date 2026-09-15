@@ -66,7 +66,8 @@ jobs:
           MASTER_DB_PASSWORD: ${{ secrets.RDS_MASTER_PASSWORD }}
           LAMBDA_AUTH_DB_USERNAME: ${{ secrets.LAMBDA_AUTH_DB_USERNAME }}
           LAMBDA_AUTH_DB_PASSWORD: ${{ secrets.LAMBDA_AUTH_DB_PASSWORD }}
-          LAMBDA_AUTH_COLUMN_GRANTS_ENABLED: ${{ vars.LAMBDA_AUTH_COLUMN_GRANTS_ENABLED || 'false' }}
+          LAMBDA_AUTH_GRANTS_PRODUCTION: ${{ vars.LAMBDA_AUTH_GRANTS_PRODUCTION || 'false' }}
+          LAMBDA_AUTH_GRANTS_HOMOLOGACAO: ${{ vars.LAMBDA_AUTH_GRANTS_HOMOLOGACAO || 'false' }}
         run: |
           terraform -chdir=terraform/roles apply -auto-approve -input=false \
             -var="application_database_username=$APPLICATION_DB_USERNAME" \
@@ -75,4 +76,5 @@ jobs:
             -var="rds_master_password=$MASTER_DB_PASSWORD" \
             -var="lambda_auth_database_username=$LAMBDA_AUTH_DB_USERNAME" \
             -var="lambda_auth_database_password=$LAMBDA_AUTH_DB_PASSWORD" \
-            -var="lambda_auth_column_grants_enabled=$LAMBDA_AUTH_COLUMN_GRANTS_ENABLED"
+            -var="lambda_auth_grants_production=$LAMBDA_AUTH_GRANTS_PRODUCTION" \
+            -var="lambda_auth_grants_homologacao=$LAMBDA_AUTH_GRANTS_HOMOLOGACAO"

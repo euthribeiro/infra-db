@@ -95,18 +95,22 @@ Nenhum desses comandos toca em recurso real — o banco que eles descreviam já 
 ### 3. Ordem do primeiro apply
 
 ```
-1. infra-k8s    terraform/infra   # completa a VPC e o cluster (hoje só há rede e ACM)
-2. infra-db     terraform/rds     # cria a instância nova
-3. infra-db     terraform/roles   # cria o role de menor privilégio da API
-4. app-k8s      deploy            # as migrations criam as tabelas
-5. infra-db     terraform/roles   # concede à Lambda o SELECT por coluna
-6. lambda-auth  deploy            # Lambdas e API Gateway
+1. infra-k8s    terraform/infra   # completa a VPC e o cluster
+2. infra-db     terraform/rds     # cria a instância e o database de produção
+3. infra-db     terraform/roles   # roles da API e da Lambda e o database de homologação
+4. app-k8s      deploy develop    # migrations criam as tabelas em wrench_auto_repair_hml
+5. app-k8s      deploy master     # migrations criam as tabelas em wrench_auto_repair
+6. infra-db     terraform/roles   # LAMBDA_AUTH_GRANTS_* = true: SELECT por coluna para a Lambda
+7. lambda-auth  deploy            # Lambdas e API Gateway de cada ambiente
 ```
 
 O role da Lambda recebe `GRANT SELECT` apenas nas colunas `Clientes(Id, Documento, Email)`,
-`Usuarios(Id, Email, PerfilId, Ativo)` e `Perfis(Id, Nome)`. O PostgreSQL só aceita concessão por
-coluna em tabela existente, e as tabelas são criadas pelas migrations da API; por isso o passo 5
-vem depois do 4.
+`Usuarios(Id, Email, PerfilId, Ativo)` e `Perfis(Id, Nome)`, em cada database cuja flag estiver
+ligada. O PostgreSQL só aceita concessão por coluna em tabela existente, e as tabelas são criadas
+pelas migrations da API; por isso o passo 6 vem depois dos passos 4 e 5.
+
+A destruição segue a ordem inversa: `lambda-auth`, `app-k8s`, `infra-db` (`roles/` e depois `rds/`)
+e, por último, `infra-k8s`.
 
 O `rds/` depende de `vpc_id` e `public_subnet_ids` do `infra-k8s`. O output `public_subnet_ids` é
 novo desta fase, então o `infra-k8s` precisa ser aplicado **antes** do `rds/` — mesmo que a VPC já

@@ -10,7 +10,17 @@ output "lambda_auth_database_username" {
   sensitive   = true
 }
 
-output "lambda_auth_column_grants_enabled" {
-  description = "Indica se os grants por coluna da Lambda de autenticação foram aplicados."
-  value       = var.lambda_auth_column_grants_enabled
+output "database_production" {
+  description = "Database da aplicação e da Lambda no ambiente de produção."
+  value       = local.database_production
+}
+
+output "database_homologacao" {
+  description = "Database da aplicação e da Lambda no ambiente de homologação, na mesma instância RDS."
+  value       = postgresql_database.homologacao.name
+}
+
+output "lambda_auth_grants" {
+  description = "Ambientes em que os grants por coluna da Lambda de autenticação estão aplicados."
+  value       = keys(local.lambda_auth_databases_habilitados)
 }

@@ -73,10 +73,26 @@ O stack `roles/` alcança o RDS pelo endpoint público (`publicly_accessible = t
 liberado), porque roda em execução remota no HCP. Não há *default privileges*: a aplicação é Code
 First e as tabelas são criadas pelo próprio role da aplicação, que é o dono delas.
 
+## Databases por ambiente
+
+A instância RDS hospeda um database por ambiente, com o mesmo schema:
+
+| Ambiente | Database | Criado por | Dono |
+|---|---|---|---|
+| `production` | `wrench_auto_repair` | `aws_db_instance` do stack `rds/` | usuário master |
+| `homologacao` | `wrench_auto_repair_hml` | `postgresql_database` do stack `roles/` | role da aplicação |
+
+A API de cada ambiente conecta ao seu database e aplica as migrations nele. No database de
+homologação o role da aplicação é dono do database e, pelo `pg_database_owner`, do schema
+`public`, então cria e altera tabelas sem grants adicionais. No de produção ele recebe `CONNECT`,
+`CREATE`, `USAGE` e os privilégios de tabela e sequência concedidos pelo master.
+
+Os outputs `database_production` e `database_homologacao` expõem os dois nomes.
+
 ## Role da Lambda de autenticação
 
 A Lambda do repositório `lambda-auth` consulta existência e status do cliente com um role próprio,
-`wrench_lambda_auth`, que só enxerga as colunas de que precisa:
+`wrench_lambda_auth`, o mesmo nos dois ambientes, que só enxerga as colunas de que precisa:
 
 | Tabela | Colunas com `SELECT` |
 |---|---|
@@ -87,22 +103,26 @@ A Lambda do repositório `lambda-auth` consulta existência e status do cliente 
 Senha, telefone, endereço e nome do cliente ficam fora do alcance da function. Essas colunas são o
 contrato entre a Lambda e a API; o `app-k8s` tem um teste que falha se uma migration as alterar.
 
-Duas restrições definem como os grants são aplicados:
+Restrições que definem como os grants são aplicados:
 
-1. **Quem concede é o dono das tabelas.** O usuário master cria o role e concede `CONNECT` e
-   `USAGE`, mas no RDS ele não é superusuário nem dono das tabelas. Os grants por coluna usam o
-   provider `postgresql.aplicacao`, que conecta com o role da aplicação — o dono das tabelas.
-2. **As tabelas precisam existir.** Elas são criadas pelas migrations no primeiro deploy do
-   `app-k8s`. Por isso os grants por coluna ficam atrás da variável
-   `lambda_auth_column_grants_enabled`, falsa por padrão.
+1. **As tabelas precisam existir.** O PostgreSQL só aceita `GRANT` por coluna em tabela existente, e
+   as tabelas de cada database são criadas pelo primeiro deploy do `app-k8s` naquele ambiente. Os
+   grants de cada database ficam atrás de uma flag própria: `lambda_auth_grants_production` e
+   `lambda_auth_grants_homologacao`, falsas por padrão. Cada flag concede `CONNECT`, `USAGE` no schema
+   e o `SELECT` por coluna apenas no seu database; desligá-la revoga.
+2. **Quem concede.** Os grants de schema e de coluna são aplicados pelo master, que assume
+   temporariamente o role dono das tabelas. O `CONNECT` no database de homologação é concedido pelo
+   provider `postgresql.aplicacao`, porque só o dono do database pode concedê-lo.
 
 Ordem na primeira subida:
 
-1. `infra-db` com `LAMBDA_AUTH_COLUMN_GRANTS_ENABLED` ausente ou `false` — cria os dois roles.
-2. `app-k8s` — primeiro deploy, que aplica as migrations.
-3. Definir a variable `LAMBDA_AUTH_COLUMN_GRANTS_ENABLED=true` e reexecutar este pipeline
-   (`workflow_dispatch`) — aplica os grants por coluna.
-4. `lambda-auth` — deploy da function.
+1. `infra-db` com as duas flags em `false` — cria os roles e o database de homologação.
+2. `app-k8s` em `develop` e em `master` — as migrations criam as tabelas nos dois databases.
+3. Variables `LAMBDA_AUTH_GRANTS_HOMOLOGACAO=true` e `LAMBDA_AUTH_GRANTS_PRODUCTION=true` e nova
+   execução deste pipeline — aplica os grants por coluna.
+4. `lambda-auth` em `develop` e em `master`.
+
+O orquestrador de provisionamento do `infra-k8s` executa essa sequência e grava as variables.
 
 ## Tecnologias
 
@@ -130,7 +150,8 @@ terraform apply \
   -var="rds_master_username=<master>" \
   -var="rds_master_password=<senha>" \
   -var="lambda_auth_database_password=<senha>" \
-  -var="lambda_auth_column_grants_enabled=true"
+  -var="lambda_auth_grants_production=true" \
+  -var="lambda_auth_grants_homologacao=true"
 ```
 
 ## Deploy
@@ -139,7 +160,8 @@ terraform apply \
 |---|---|
 | Pull request para `master` | `fmt -check`, `init` e `validate` dos dois stacks |
 | Push em `master` | `apply` do `rds/` e, em seguida, do `roles/` |
-| `workflow_dispatch` | Mesmo fluxo, sob demanda |
+| `workflow_dispatch` em `ci-cd.yml` | Mesmo fluxo, sob demanda |
+| `workflow_dispatch` em `destroy.yml` com `confirmacao=DESTRUIR` | Destroy do `roles/` e, em seguida, do `rds/` |
 
 O `roles/` depende do `rds/` no mesmo workflow (`needs`), garantindo que a instância exista antes
 da tentativa de conexão.
@@ -152,8 +174,26 @@ da tentativa de conexão.
 | `RDS_MASTER_USERNAME` / `RDS_MASTER_PASSWORD` | secret | Usuário master do RDS |
 | `APPLICATION_DATABASE_USERNAME` / `APPLICATION_DB_PASSWORD` | secret | Role de menor privilégio da aplicação |
 | `LAMBDA_AUTH_DB_USERNAME` / `LAMBDA_AUTH_DB_PASSWORD` | secret | Role somente leitura da Lambda de autenticação; os mesmos valores vão para o `lambda-auth` |
-| `LAMBDA_AUTH_COLUMN_GRANTS_ENABLED` | variable | `true` depois do primeiro deploy do `app-k8s`; habilita o `SELECT` por coluna |
+| `LAMBDA_AUTH_GRANTS_PRODUCTION` | variable | `true` depois do primeiro deploy do `app-k8s` em `master`; grants da Lambda no database de produção |
+| `LAMBDA_AUTH_GRANTS_HOMOLOGACAO` | variable | `true` depois do primeiro deploy do `app-k8s` em `develop`; grants da Lambda no database de homologação |
 | `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ZONE_ID` | secret | CNAME `prod-db` |
+
+## Destruição
+
+O workflow **Destruir Banco de Dados** (`destroy.yml`) só executa com a entrada `confirmacao`
+igual a `DESTRUIR`. É chamado pelo orquestrador de destruição do `infra-k8s` depois da Lambda e da
+aplicação, e antes da infraestrutura Kubernetes, porque o `rds/` usa a VPC do `infra-k8s`.
+
+1. `roles/` — remove grants, roles e o database de homologação.
+2. `rds/` — remove a instância, o subnet group, o security group e o CNAME `prod-db`. A instância é
+   destruída sem snapshot final (`skip_final_snapshot = true`).
+
+Restrições:
+
+* Stack sem recursos no state é tratado como já destruído; a execução é idempotente.
+* Se o destroy do `roles/` falhar — por exemplo, com a instância já inacessível —, os recursos do
+  PostgreSQL são removidos do state e o pipeline segue para o `rds/`, que elimina tudo o que existia
+  dentro da instância. O resumo da execução lista o que foi removido do state.
 
 ## Migração de state vinda do monorepo
 

@@ -1,0 +1,124 @@
+name: Destruir Banco de Dados
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmacao:
+        description: 'Digite DESTRUIR para remover roles, databases e a instância RDS'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infra-db-destroy
+  cancel-in-progress: false
+
+jobs:
+  validar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Conferir confirmação
+        env:
+          CONFIRMACAO: ${{ inputs.confirmacao }}
+        run: |
+          if [ "$CONFIRMACAO" != "DESTRUIR" ]; then
+            echo "::error::Confirmação inválida. Digite DESTRUIR para prosseguir."
+            exit 1
+          fi
+
+  roles:
+    needs: validar
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+
+      - name: Terraform Init Roles
+        run: terraform -chdir=terraform/roles init -input=false
+
+      - name: Terraform Destroy Roles
+        env:
+          APPLICATION_DB_USERNAME: ${{ secrets.APPLICATION_DATABASE_USERNAME }}
+          APPLICATION_DB_PASSWORD: ${{ secrets.APPLICATION_DB_PASSWORD }}
+          MASTER_DB_USERNAME: ${{ secrets.RDS_MASTER_USERNAME }}
+          MASTER_DB_PASSWORD: ${{ secrets.RDS_MASTER_PASSWORD }}
+          LAMBDA_AUTH_DB_USERNAME: ${{ secrets.LAMBDA_AUTH_DB_USERNAME }}
+          LAMBDA_AUTH_DB_PASSWORD: ${{ secrets.LAMBDA_AUTH_DB_PASSWORD }}
+          LAMBDA_AUTH_GRANTS_PRODUCTION: ${{ vars.LAMBDA_AUTH_GRANTS_PRODUCTION || 'false' }}
+          LAMBDA_AUTH_GRANTS_HOMOLOGACAO: ${{ vars.LAMBDA_AUTH_GRANTS_HOMOLOGACAO || 'false' }}
+        run: |
+          RECURSOS=$(terraform -chdir=terraform/roles state list 2>/dev/null || true)
+          if [ -z "$RECURSOS" ]; then
+            echo "Stack roles/ sem recursos no state." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if terraform -chdir=terraform/roles apply -destroy -auto-approve -input=false \
+            -var="application_database_username=$APPLICATION_DB_USERNAME" \
+            -var="application_database_password=$APPLICATION_DB_PASSWORD" \
+            -var="rds_master_username=$MASTER_DB_USERNAME" \
+            -var="rds_master_password=$MASTER_DB_PASSWORD" \
+            -var="lambda_auth_database_username=$LAMBDA_AUTH_DB_USERNAME" \
+            -var="lambda_auth_database_password=$LAMBDA_AUTH_DB_PASSWORD" \
+            -var="lambda_auth_grants_production=$LAMBDA_AUTH_GRANTS_PRODUCTION" \
+            -var="lambda_auth_grants_homologacao=$LAMBDA_AUTH_GRANTS_HOMOLOGACAO"; then
+            echo "Stack roles/ destruído." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "::warning::Destroy do roles/ falhou; os recursos serão removidos do state e eliminados junto com a instância RDS."
+          RESTANTES=$(terraform -chdir=terraform/roles state list 2>/dev/null || true)
+          if [ -n "$RESTANTES" ]; then
+            echo "$RESTANTES" | xargs terraform -chdir=terraform/roles state rm
+          fi
+          {
+            echo "Destroy do roles/ falhou. Recursos removidos do state:"
+            echo ""
+            while IFS= read -r recurso; do
+              echo "- $recurso"
+            done <<< "$RESTANTES"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  rds:
+    needs: roles
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+
+      - name: Terraform Init RDS
+        run: terraform -chdir=terraform/rds init -input=false
+
+      - name: Terraform Destroy RDS
+        env:
+          MASTER_DB_USERNAME: ${{ secrets.RDS_MASTER_USERNAME }}
+          MASTER_DB_PASSWORD: ${{ secrets.RDS_MASTER_PASSWORD }}
+        run: |
+          RECURSOS=$(terraform -chdir=terraform/rds state list 2>/dev/null || true)
+          if [ -z "$RECURSOS" ]; then
+            echo "Stack rds/ sem recursos no state." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          terraform -chdir=terraform/rds apply -destroy -auto-approve -input=false \
+            -var="rds_database_username=$MASTER_DB_USERNAME" \
+            -var="rds_database_password=$MASTER_DB_PASSWORD"
+          echo "Stack rds/ destruído." | tee -a "$GITHUB_STEP_SUMMARY"
