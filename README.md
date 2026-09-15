@@ -4,7 +4,7 @@ Terraform que provisiona o **PostgreSQL gerenciado (Amazon RDS)** do Wrench Auto
 de menor privilégio que a aplicação usa para se conectar e o role somente leitura da Lambda de
 autenticação.
 
-FIAP · Pós-Tech · 13SOAT · Tech Challenge Fase 3 · Grupo **BGT³**
+FIAP · Pós-Tech · 15SOAT · Tech Challenge Fase 3 · Grupo **BGT³**
 
 ## Propósito
 
