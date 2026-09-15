@@ -5,14 +5,14 @@ resource "postgresql_role" "app" {
 }
 
 resource "postgresql_grant" "database" {
-  database    = local.db_name
+  database    = local.database_production
   role        = postgresql_role.app.name
   object_type = "database"
   privileges  = ["CONNECT", "CREATE"]
 }
 
 resource "postgresql_grant" "schema" {
-  database    = local.db_name
+  database    = local.database_production
   schema      = "public"
   role        = postgresql_role.app.name
   object_type = "schema"
@@ -20,7 +20,7 @@ resource "postgresql_grant" "schema" {
 }
 
 resource "postgresql_grant" "tables" {
-  database    = local.db_name
+  database    = local.database_production
   schema      = "public"
   role        = postgresql_role.app.name
   object_type = "table"
@@ -37,7 +37,7 @@ resource "postgresql_grant" "tables" {
 }
 
 resource "postgresql_grant" "sequences" {
-  database    = local.db_name
+  database    = local.database_production
   schema      = "public"
   role        = postgresql_role.app.name
   object_type = "sequence"
@@ -47,4 +47,11 @@ resource "postgresql_grant" "sequences" {
     "SELECT",
     "UPDATE",
   ]
+}
+
+resource "postgresql_database" "homologacao" {
+  name              = local.database_homologacao
+  owner             = postgresql_role.app.name
+  allow_connections = true
+  connection_limit  = -1
 }

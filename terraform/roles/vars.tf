@@ -35,8 +35,14 @@ variable "lambda_auth_database_password" {
   sensitive   = true
 }
 
-variable "lambda_auth_column_grants_enabled" {
-  description = "Aplica o SELECT por coluna da Lambda de autenticação. Só pode ser true depois que as migrations da API criarem as tabelas."
+variable "lambda_auth_grants_production" {
+  description = "Concede ao role da Lambda CONNECT, USAGE e SELECT por coluna no database de produção. Só pode ser true depois que as migrations da API criarem as tabelas nesse database."
+  type        = bool
+  default     = false
+}
+
+variable "lambda_auth_grants_homologacao" {
+  description = "Concede ao role da Lambda CONNECT, USAGE e SELECT por coluna no database de homologação. Só pode ser true depois que as migrations da API criarem as tabelas nesse database."
   type        = bool
   default     = false
 }
