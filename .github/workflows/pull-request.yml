@@ -1,0 +1,33 @@
+name: Validação de Pull Request
+
+on:
+  pull_request:
+    branches: ['master']
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        stack: [rds, roles]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+
+      - name: Terraform fmt
+        run: terraform -chdir=terraform/${{ matrix.stack }} fmt -check -diff
+
+      - name: Terraform Init
+        run: terraform -chdir=terraform/${{ matrix.stack }} init -input=false
+
+      - name: Terraform Validate
+        run: terraform -chdir=terraform/${{ matrix.stack }} validate

@@ -1,0 +1,78 @@
+name: Infraestrutura do Banco de Dados
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: ['master']
+  workflow_dispatch:
+
+jobs:
+  rds:
+    runs-on: ubuntu-latest
+    environment: production
+
+    outputs:
+      database_hostname: ${{ steps.rds.outputs.database_hostname }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+
+      - name: Terraform Init RDS
+        run: terraform -chdir=terraform/rds init -input=false
+
+      - name: Terraform Apply RDS
+        id: rds
+        env:
+          MASTER_DB_USERNAME: ${{ secrets.RDS_MASTER_USERNAME }}
+          MASTER_DB_PASSWORD: ${{ secrets.RDS_MASTER_PASSWORD }}
+        run: |
+          terraform -chdir=terraform/rds apply -auto-approve -input=false \
+            -var="rds_database_username=$MASTER_DB_USERNAME" \
+            -var="rds_database_password=$MASTER_DB_PASSWORD"
+          echo "database_hostname=$(terraform -chdir=terraform/rds output -raw database_hostname)" >> "$GITHUB_OUTPUT"
+
+  roles:
+    needs: rds
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+
+      - name: Terraform Init Roles
+        run: terraform -chdir=terraform/roles init -input=false
+
+      - name: Terraform Apply Roles
+        env:
+          APPLICATION_DB_USERNAME: ${{ secrets.APPLICATION_DATABASE_USERNAME }}
+          APPLICATION_DB_PASSWORD: ${{ secrets.APPLICATION_DB_PASSWORD }}
+          MASTER_DB_USERNAME: ${{ secrets.RDS_MASTER_USERNAME }}
+          MASTER_DB_PASSWORD: ${{ secrets.RDS_MASTER_PASSWORD }}
+          LAMBDA_AUTH_DB_USERNAME: ${{ secrets.LAMBDA_AUTH_DB_USERNAME }}
+          LAMBDA_AUTH_DB_PASSWORD: ${{ secrets.LAMBDA_AUTH_DB_PASSWORD }}
+          LAMBDA_AUTH_COLUMN_GRANTS_ENABLED: ${{ vars.LAMBDA_AUTH_COLUMN_GRANTS_ENABLED || 'false' }}
+        run: |
+          terraform -chdir=terraform/roles apply -auto-approve -input=false \
+            -var="application_database_username=$APPLICATION_DB_USERNAME" \
+            -var="application_database_password=$APPLICATION_DB_PASSWORD" \
+            -var="rds_master_username=$MASTER_DB_USERNAME" \
+            -var="rds_master_password=$MASTER_DB_PASSWORD" \
+            -var="lambda_auth_database_username=$LAMBDA_AUTH_DB_USERNAME" \
+            -var="lambda_auth_database_password=$LAMBDA_AUTH_DB_PASSWORD" \
+            -var="lambda_auth_column_grants_enabled=$LAMBDA_AUTH_COLUMN_GRANTS_ENABLED"
