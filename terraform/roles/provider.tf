@@ -19,3 +19,17 @@ provider "postgresql" {
   sslmode   = "require"
   superuser = false
 }
+
+# Conecta como o role do Billing, dono dos databases dele. Só o dono consegue revogar o CONNECT que o
+# PostgreSQL concede a PUBLIC (o master não é dono do database, então o REVOKE dele não tem efeito).
+provider "postgresql" {
+  alias = "billing"
+
+  host      = local.db_address
+  port      = 5432
+  database  = local.billing_database_production
+  username  = var.billing_database_username
+  password  = var.billing_database_password
+  sslmode   = "require"
+  superuser = false
+}

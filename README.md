@@ -103,15 +103,19 @@ database por ambiente, ambos com o mesmo role de menor privilégio:
 - O role (`wrench_billing` por padrão) não é superusuário e não cria roles nem databases. Por ser dono do
   database e, pelo `pg_database_owner`, do schema `public`, ele cria as tabelas das migrations (Code First) sem
   grants de tabela nem *default privileges*.
-- O `CONNECT` que o PostgreSQL concede a `PUBLIC` por padrão é **revogado** nos dois databases
-  (`postgresql_grant.billing_revoga_public`), então os roles da API e da Lambda não conectam neles. O dono
-  continua conectando.
+- O `CONNECT` e o `TEMPORARY` que o PostgreSQL concede a `PUBLIC` por padrão são **revogados** nos dois databases
+  (`postgresql_grant.billing_revoga_public`), então os roles da API e da Lambda não conectam neles. Isso usa o
+  provider `postgresql.billing`, conectado como o dono: o `REVOKE` feito pelo master não tem efeito, porque só o
+  dono do database revoga o que ele mesmo concedeu.
+- Sem o `PUBLIC`, o master também perderia o acesso. Por isso `postgresql_grant.billing_master_conecta` concede
+  `CONNECT` a `rds_master_username` (só conectar: ele continua sem ler as tabelas do Billing).
 - O inverso não é fechado por este stack: o `PUBLIC` do database da API não foi alterado, então o role do
   Billing pode conectar lá, mas não tem nenhum privilégio sobre as tabelas dele.
-- **Ainda não aplicado.** O código passou em `fmt` e `validate`, mas não foi aplicado nem testado contra um RDS.
-  Pontos a confirmar no primeiro `plan`/`apply`: a criação de database com `owner` por um master que não é
-  superusuário (o mesmo mecanismo já usado no database de homologação da API) e o efeito do `revoke` do `PUBLIC`
-  sobre o acesso do master.
+- **Verificação.** Além de `fmt` e `validate`, este código foi aplicado num PostgreSQL 16 real em Docker, com um master
+  emulado sem superusuário (`CREATEDB` e `CREATEROLE`, como o do RDS): `apply` do zero (7 recursos), `plan`
+  seguinte sem mudanças, role da API **negada** nos dois databases do Billing, role do Billing sem acesso às
+  tabelas da API, e `destroy` sem resíduos. **Ainda não foi aplicado em um RDS real**: o master do RDS é
+  `rds_superuser`, não um papel idêntico ao emulado, então confira o primeiro `plan`/`apply`.
 - Variáveis: `billing_database_name` (padrão `wrench_billing`), `billing_database_username` (padrão
   `wrench_billing`) e `billing_database_password` (obrigatória). Outputs: `billing_database_username`,
   `billing_database_production` e `billing_database_homologacao`.

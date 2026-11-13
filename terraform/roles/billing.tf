@@ -33,14 +33,32 @@ resource "postgresql_database" "billing" {
   connection_limit  = -1
 }
 
-# O PostgreSQL concede CONNECT a PUBLIC por padrão. Revogá-lo impede que os roles dos outros serviços
-# (API, Lambda de autenticação, Execução) sequer conectem nos databases do Billing. O dono continua
-# conectando. Conferir no primeiro plan/apply se o master do RDS mantém o acesso necessário.
+# O PostgreSQL concede CONNECT e TEMPORARY a PUBLIC por padrão. Revogá-los impede que os roles dos outros
+# serviços (API, Lambda de autenticação, Execução) sequer conectem nos databases do Billing.
+#
+# Precisa do provider "billing" (conectado como o dono): o REVOKE do master não tem efeito, porque só o
+# dono do database revoga o que ele mesmo concedeu. Verificado em Postgres real: com o provider padrão a ACL
+# continuava `=Tc/...` e o plano nunca convergia.
 resource "postgresql_grant" "billing_revoga_public" {
   for_each = local.billing_databases
+  provider = postgresql.billing
 
   database    = postgresql_database.billing[each.key].name
   role        = "public"
   object_type = "database"
   privileges  = []
+}
+
+# Sem o PUBLIC, o master do RDS também deixaria de conectar nesses databases (verificado em Postgres real).
+# O CONNECT explícito mantém o acesso operacional (diagnóstico, dump) sem reabrir para os outros serviços.
+resource "postgresql_grant" "billing_master_conecta" {
+  for_each = local.billing_databases
+  provider = postgresql.billing
+
+  database    = postgresql_database.billing[each.key].name
+  role        = var.rds_master_username
+  object_type = "database"
+  privileges  = ["CONNECT"]
+
+  depends_on = [postgresql_grant.billing_revoga_public]
 }
