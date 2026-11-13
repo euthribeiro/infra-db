@@ -66,9 +66,15 @@ jobs:
           MASTER_DB_PASSWORD: ${{ secrets.RDS_MASTER_PASSWORD }}
           LAMBDA_AUTH_DB_USERNAME: ${{ secrets.LAMBDA_AUTH_DB_USERNAME }}
           LAMBDA_AUTH_DB_PASSWORD: ${{ secrets.LAMBDA_AUTH_DB_PASSWORD }}
+          BILLING_DB_USERNAME: ${{ secrets.BILLING_DB_USERNAME || 'wrench_billing' }}
+          BILLING_DB_PASSWORD: ${{ secrets.BILLING_DB_PASSWORD }}
           LAMBDA_AUTH_GRANTS_PRODUCTION: ${{ vars.LAMBDA_AUTH_GRANTS_PRODUCTION || 'false' }}
           LAMBDA_AUTH_GRANTS_HOMOLOGACAO: ${{ vars.LAMBDA_AUTH_GRANTS_HOMOLOGACAO || 'false' }}
         run: |
+          if [ -z "$BILLING_DB_PASSWORD" ]; then
+            echo "::error::Secret BILLING_DB_PASSWORD não configurado (senha do role do Billing Service)."
+            exit 1
+          fi
           terraform -chdir=terraform/roles apply -auto-approve -input=false \
             -var="application_database_username=$APPLICATION_DB_USERNAME" \
             -var="application_database_password=$APPLICATION_DB_PASSWORD" \
@@ -76,5 +82,7 @@ jobs:
             -var="rds_master_password=$MASTER_DB_PASSWORD" \
             -var="lambda_auth_database_username=$LAMBDA_AUTH_DB_USERNAME" \
             -var="lambda_auth_database_password=$LAMBDA_AUTH_DB_PASSWORD" \
+            -var="billing_database_username=$BILLING_DB_USERNAME" \
+            -var="billing_database_password=$BILLING_DB_PASSWORD" \
             -var="lambda_auth_grants_production=$LAMBDA_AUTH_GRANTS_PRODUCTION" \
             -var="lambda_auth_grants_homologacao=$LAMBDA_AUTH_GRANTS_HOMOLOGACAO"
