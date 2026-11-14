@@ -24,3 +24,19 @@ output "lambda_auth_grants" {
   description = "Ambientes em que os grants por coluna da Lambda de autenticação estão aplicados."
   value       = keys(local.lambda_auth_databases_habilitados)
 }
+
+output "billing_database_username" {
+  description = "Role de menor privilégio do Billing Service."
+  value       = postgresql_role.billing.name
+  sensitive   = true
+}
+
+output "billing_database_production" {
+  description = "Database do Billing Service no ambiente de produção."
+  value       = postgresql_database.billing["production"].name
+}
+
+output "billing_database_homologacao" {
+  description = "Database do Billing Service no ambiente de homologação, na mesma instância RDS."
+  value       = postgresql_database.billing["homologacao"].name
+}

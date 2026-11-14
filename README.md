@@ -1,8 +1,8 @@
 # infra-db — Infraestrutura do Banco de Dados Gerenciado
 
 Terraform que provisiona o **PostgreSQL gerenciado (Amazon RDS)** do Wrench Auto Repair, o role
-de menor privilégio que a aplicação usa para se conectar e o role somente leitura da Lambda de
-autenticação.
+de menor privilégio que a aplicação usa para se conectar, o role somente leitura da Lambda de
+autenticação e o database e o role do **Billing Service** (Tech Challenge Fase 4).
 
 FIAP · Pós-Tech · 15SOAT · Tech Challenge Fase 3 · Grupo **BGT³**
 
@@ -61,7 +61,7 @@ plano, então instância e role não cabem no mesmo state:
 | Stack | Workspace HCP | Responsabilidade |
 |---|---|---|
 | `terraform/rds` | `wrench_auto_repair_rds` | Instância RDS, DB subnet group, security group e CNAME |
-| `terraform/roles` | `wrench_auto_repair_postgres` | Role da aplicação e role somente leitura da Lambda de autenticação |
+| `terraform/roles` | `wrench_auto_repair_postgres` | Role da aplicação, role somente leitura da Lambda de autenticação e database e role do Billing Service |
 
 O stack `roles/` lê `database_address` e `database_name` do state do `rds/` via
 `terraform_remote_state`.
@@ -88,6 +88,42 @@ homologação o role da aplicação é dono do database e, pelo `pg_database_own
 `CREATE`, `USAGE` e os privilégios de tabela e sequência concedidos pelo master.
 
 Os outputs `database_production` e `database_homologacao` expõem os dois nomes.
+
+## Database do Billing Service (Fase 4)
+
+O Billing Service (orçamento, pagamento e estorno) tem **banco próprio**: nenhum outro serviço acessa o database
+dele, e ele não acessa o dos outros. Na mesma instância RDS, o stack `roles/` (arquivo `billing.tf`) cria um
+database por ambiente, ambos com o mesmo role de menor privilégio:
+
+| Ambiente | Database | Dono |
+|---|---|---|
+| `production` | `wrench_billing` | role do Billing |
+| `homologacao` | `wrench_billing_hml` | role do Billing |
+
+- O role (`wrench_billing` por padrão) não é superusuário e não cria roles nem databases. Por ser dono do
+  database e, pelo `pg_database_owner`, do schema `public`, ele cria as tabelas das migrations (Code First) sem
+  grants de tabela nem *default privileges*.
+- O `CONNECT` e o `TEMPORARY` que o PostgreSQL concede a `PUBLIC` por padrão são **revogados** nos dois databases
+  (`postgresql_grant.billing_revoga_public`), então os roles da API e da Lambda não conectam neles. Isso usa o
+  provider `postgresql.billing`, conectado como o dono: o `REVOKE` feito pelo master não tem efeito, porque só o
+  dono do database revoga o que ele mesmo concedeu.
+- Sem o `PUBLIC`, o master também perderia o acesso. Por isso `postgresql_grant.billing_master_conecta` concede
+  `CONNECT` a `rds_master_username` (só conectar: ele continua sem ler as tabelas do Billing).
+- O inverso não é fechado por este stack: o `PUBLIC` do database da API não foi alterado, então o role do
+  Billing pode conectar lá, mas não tem nenhum privilégio sobre as tabelas dele.
+- **Verificação.** Além de `fmt` e `validate`, este código foi aplicado num PostgreSQL 16 real em Docker, com um master
+  emulado sem superusuário (`CREATEDB` e `CREATEROLE`, como o do RDS): `apply` do zero (7 recursos), `plan`
+  seguinte sem mudanças, role da API **negada** nos dois databases do Billing, role do Billing sem acesso às
+  tabelas da API, e `destroy` sem resíduos. **Ainda não foi aplicado em um RDS real**: o master do RDS é
+  `rds_superuser`, não um papel idêntico ao emulado, então confira o primeiro `plan`/`apply`.
+- Variáveis: `billing_database_name` (padrão `wrench_billing`), `billing_database_username` (padrão
+  `wrench_billing`) e `billing_database_password` (obrigatória). Outputs: `billing_database_username`,
+  `billing_database_production` e `billing_database_homologacao`.
+- O `billing-service` conecta com `Database=<output>;Username=<role>` em `prod-db.bgt3.com.br` e aplica as
+  migrations ao subir (`Database__MigrateOnStartup=true`). Usuário e senha do chart Helm (`database.user` e
+  `database.password`) devem ser os mesmos secrets `BILLING_DB_*` abaixo.
+- Antes de o primeiro `apply` valer, o secret `BILLING_DB_PASSWORD` precisa existir no repositório: o `ci-cd.yml`
+  falha de propósito se ele estiver vazio. No `destroy.yml` ele não é necessário.
 
 ## Role da Lambda de autenticação
 
@@ -174,6 +210,7 @@ da tentativa de conexão.
 | `RDS_MASTER_USERNAME` / `RDS_MASTER_PASSWORD` | secret | Usuário master do RDS |
 | `APPLICATION_DATABASE_USERNAME` / `APPLICATION_DB_PASSWORD` | secret | Role de menor privilégio da aplicação |
 | `LAMBDA_AUTH_DB_USERNAME` / `LAMBDA_AUTH_DB_PASSWORD` | secret | Role somente leitura da Lambda de autenticação; os mesmos valores vão para o `lambda-auth` |
+| `BILLING_DB_USERNAME` / `BILLING_DB_PASSWORD` | secret | Role do Billing Service (o usuário é opcional e, sem ele, usa `wrench_billing`); os mesmos valores vão para o chart do `billing-service` |
 | `LAMBDA_AUTH_GRANTS_PRODUCTION` | variable | `true` depois do primeiro deploy do `app-k8s` em `master`; grants da Lambda no database de produção |
 | `LAMBDA_AUTH_GRANTS_HOMOLOGACAO` | variable | `true` depois do primeiro deploy do `app-k8s` em `develop`; grants da Lambda no database de homologação |
 | `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ZONE_ID` | secret | CNAME `prod-db` |
@@ -184,7 +221,7 @@ O workflow **Destruir Banco de Dados** (`destroy.yml`) só executa com a entrada
 igual a `DESTRUIR`. É chamado pelo orquestrador de destruição do `infra-k8s` depois da Lambda e da
 aplicação, e antes da infraestrutura Kubernetes, porque o `rds/` usa a VPC do `infra-k8s`.
 
-1. `roles/` — remove grants, roles e o database de homologação.
+1. `roles/` — remove grants, roles e os databases de homologação (API e Billing) e de produção do Billing.
 2. `rds/` — remove a instância, o subnet group, o security group e o CNAME `prod-db`. A instância é
    destruída sem snapshot final (`skip_final_snapshot = true`).
 

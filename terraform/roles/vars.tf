@@ -58,3 +58,22 @@ variable "rds_workspace" {
   type        = string
   default     = "wrench_auto_repair_rds"
 }
+
+variable "billing_database_name" {
+  description = "Database do Billing Service em produção. O de homologação recebe o sufixo _hml."
+  type        = string
+  default     = "wrench_billing"
+}
+
+variable "billing_database_username" {
+  description = "Role de menor privilégio do Billing Service, dono dos seus databases."
+  type        = string
+  sensitive   = true
+  default     = "wrench_billing"
+}
+
+variable "billing_database_password" {
+  description = "Senha do role do Billing Service."
+  type        = string
+  sensitive   = true
+}
